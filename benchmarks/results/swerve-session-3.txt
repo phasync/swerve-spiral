@@ -1,0 +1,8 @@
+Running 10s test @ http://127.0.0.1:18910/swerve/counter
+  4 threads and 64 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    31.21ms    7.75ms  68.74ms   55.48%
+    Req/Sec   514.10     33.21   600.00     64.75%
+  20479 requests in 10.02s, 2.54MB read
+Requests/sec:   2043.05
+Transfer/sec:    259.17KB

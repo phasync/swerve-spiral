@@ -1,8 +1,8 @@
 #!/bin/bash
 # PHP-FPM behind nginx, RoadRunner and swerve (without and with phasync-ext), each with 4 PHP
 # workers and opcache on, serving benchmarks/app (made by setup.sh): wrk -t4 -c64 -d10s on the
-# skeleton's home page, a JSON route and a page using the session (sessions.lua). Raw output in
-# results/.
+# skeleton's home page, a JSON route and a page using the session (sessions.lua), in three
+# rounds that take the servers in turn. Raw output in results/, medians in results/summary.txt.
 #
 #   benchmarks/setup.sh && benchmarks/run.sh
 set -eu
@@ -47,24 +47,24 @@ wait_up() {
     exit 1
 }
 
-bench() { # name, then the command that serves the app on $port
-    local name=$1
-    shift
-    (cd "$app" && exec "$@") >"results/$name-server.log" 2>&1 &
+bench() { # round, name, then the command that serves the app on $port
+    local round=$1 name=$2
+    shift 2
+    (cd "$app" && exec "$@") >>"results/$name-server.log" 2>&1 &
     local pid=$!
     wait_up
     # 256 sessions, made with the headers wrk sends (Spiral signs a session with the client's headers)
     for _ in $(seq 1 256); do
         curl -s -o /dev/null -H 'User-Agent:' -c - "http://127.0.0.1:$port/swerve/counter" \
             | awk '/^#HttpOnly_/ || !/^#/ { if ($6 != "") printf "%s=%s; ", $6, $7 } END { print "" }'
-    done >results/cookies.txt
+    done >"results/cookies-$name.txt"
     flock "$lock" wrk -t4 -c64 -d3s "http://127.0.0.1:$port/" >/dev/null # warm-up
     for route in home:/ json:/swerve/json session:/swerve/counter; do
         local label=${route%%:*} path=${route#*:}
         local script=()
         [ "$label" = session ] && script=(-s sessions.lua)
-        flock "$lock" wrk -t4 -c64 -d10s "${script[@]}" "http://127.0.0.1:$port$path" ${script:+results/cookies.txt} >"results/$name-$label.txt"
-        echo "$name $label: $(grep Requests/sec "results/$name-$label.txt")"
+        flock "$lock" wrk -t4 -c64 -d10s "${script[@]}" "http://127.0.0.1:$port$path" ${script:+"results/cookies-$name.txt"} >"results/$name-$label-$round.txt"
+        echo "$round $name $label: $(grep Requests/sec "results/$name-$label-$round.txt")"
     done
     kill "$pid"
     wait "$pid" 2>/dev/null || true
@@ -80,7 +80,17 @@ bench() { # name, then the command that serves the app on $port
     wrk --version 2>&1 | head -1
 } >results/versions.txt
 
-bench fpm "$fpm" public $port 4
-bench roadrunner ./rr serve -c .rr-bench.yaml
-bench swerve php -d opcache.enable_cli=1 vendor/bin/swerve --workers=4 --no-access-log --http=127.0.0.1:$port swerve.php
-bench swerve-ext php -d opcache.enable_cli=1 -d extension=$ext vendor/bin/swerve --workers=4 --no-access-log --http=127.0.0.1:$port swerve.php
+for round in 1 2 3; do
+    bench $round fpm "$fpm" public $port 4
+    bench $round roadrunner ./rr serve -c .rr-bench.yaml
+    bench $round swerve php -d opcache.enable_cli=1 vendor/bin/swerve --workers=4 --no-access-log --http=127.0.0.1:$port swerve.php
+    bench $round swerve-ext php -d opcache.enable_cli=1 -d extension=$ext vendor/bin/swerve --workers=4 --no-access-log --http=127.0.0.1:$port swerve.php
+done
+
+# The median of the three rounds
+for name in fpm roadrunner swerve swerve-ext; do
+    for label in home json session; do
+        printf '%s %s %s\n' $name $label "$(cat results/$name-$label-?.txt | awk '/Requests\/sec/ {print $2}' | sort -n | sed -n 2p)"
+    done
+done >results/summary.txt
+cat results/summary.txt

@@ -1,0 +1,12 @@
+fpm home 241.35
+fpm json 242.46
+fpm session 236.24
+roadrunner home 2401.57
+roadrunner json 2524.56
+roadrunner session 2114.27
+swerve home 2282.87
+swerve json 2388.51
+swerve session 2049.76
+swerve-ext home 2292.14
+swerve-ext json 2393.85
+swerve-ext session 1748.78

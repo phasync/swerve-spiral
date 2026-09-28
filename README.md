@@ -36,12 +36,12 @@ The Spiral skeleton, 4 workers, opcache on, production settings, `wrk -t4 -c64 -
 
 | Requests per second | PHP-FPM | RoadRunner | swerve | swerve + phasync-ext |
 |---|---:|---:|---:|---:|
-| Home page | 241 | 2,402 | 2,312 | 2,244 |
-| JSON route | 245 | 2,469 | 2,382 | 2,350 |
-| Page with session | 241 | 2,090 | 2,006 | 1,723 |
+| Home page | 241 | 2,402 | 2,283 | 2,292 |
+| JSON route | 242 | 2,525 | 2,389 | 2,394 |
+| Page with session | 236 | 2,114 | 2,050 | 1,749 |
 
 Under PHP-FPM Spiral boots for every request. swerve boots it once, as RoadRunner does, and
-serves 8 to 10 times as much, within 4% of RoadRunner; what a request costs now is Spiral's own
+serves 9 to 10 times as much, within 6% of RoadRunner; what a request costs now is Spiral's own
 request handling, about 85% of a worker's time. [Method and raw results](benchmarks/).
 
 ## How it runs
@@ -73,7 +73,7 @@ request handling, about 85% of a worker's time. [Method and raw results](benchma
   workers as RoadRunner's `num_workers`. A request waiting for an API holds its worker, with or
   without phasync-ext.
 - phasync-ext makes the file session handler's reads and writes wait as coroutines, with nothing
-  else to run meanwhile: the session page was 14% slower with it. Load it for WebSockets,
+  else to run meanwhile: the session page was 15% slower with it. Load it for WebSockets,
   Server-Sent Events or thousands of connections, not for Spiral's pages.
 - Code that runs after the controller returned (a generator body, a Server-Sent Events producer, a
   WebSocket callback) runs outside the request's scope while the worker serves other requests.

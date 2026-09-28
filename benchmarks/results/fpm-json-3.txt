@@ -1,0 +1,8 @@
+Running 10s test @ http://127.0.0.1:18910/swerve/json
+  4 threads and 64 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   257.62ms   20.80ms 482.40ms   97.76%
+    Req/Sec    63.63     37.81   151.00     66.78%
+  2453 requests in 10.03s, 0.86MB read
+Requests/sec:    244.56
+Transfer/sec:     87.41KB
