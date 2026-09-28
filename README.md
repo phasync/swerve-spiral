@@ -61,7 +61,7 @@ request handling, about 85% of a worker's time. [Method and raw results](benchma
   connections as singletons that the finalizers clear after each request. Its container scopes
   are fiber-safe, but that is not enough. Static files, streamed bodies, Server-Sent Events and
   WebSockets are served alongside, since they run after `handle()` returned.
-- **Sessions:** Spiral's own, with the handler in `config/session.php`. Spiral gives every request
+- **Sessions:** Spiral's own, with the handler in `app/config/session.php`. Spiral gives every request
   its session id, a new one for a visitor without a cookie, so none carries over. What is echoed
   outside a controller goes to swerve's terminal past PHP's output layer, which would otherwise
   count the headers as sent and make `session_set_save_handler()` fail for the worker's life.
@@ -92,7 +92,7 @@ request handling, about 85% of a worker's time. [Method and raw results](benchma
 
 | Spiral | PHP | phasync-ext |
 |---|---|---|
-| 3.15 and later (`spiral/app` 3.8, and 3.9 on PHP 8.4+) | 8.2 – 8.5 | optional; tested with and without |
+| 3.15 and later, tested with 3.17 (`spiral/app` 3.9 on PHP 8.4+, 3.8 below) | 8.2 – 8.5 | optional; tested with and without |
 
 ## License
 
