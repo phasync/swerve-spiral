@@ -1,0 +1,15 @@
+2026-09-28 16:22:12.87   swerve 0.1.0-alpha12 serving swerve.php on http://127.0.0.1:18910 with 4 workers
+2026-09-28 16:23:08.73   Shutting down: draining 4 workers (grace 30 s)
+[ErrorException]
+stream_socket_accept(): Accept failed: Connection timed out
+in vendor/phasync/swerve/src/Http/NativeHttpServer.php:178
+[ErrorException]
+stream_socket_accept(): Accept failed: Connection timed out
+in vendor/phasync/swerve/src/Http/NativeHttpServer.php:178
+[ErrorException]
+stream_socket_accept(): Accept failed: Connection timed out
+in vendor/phasync/swerve/src/Http/NativeHttpServer.php:178
+[ErrorException]
+stream_socket_accept(): Accept failed: Connection timed out
+in vendor/phasync/swerve/src/Http/NativeHttpServer.php:178
+2026-09-28 16:23:08.86   Stopped in 0.13 s
