@@ -27,7 +27,9 @@ use Spiral\Http\Http;
  * dispatcher serves one: Http::handle() in that scope, a 500 reported to Spiral's exception
  * handler for what escapes it, then the finalizers (the Cycle ORM heap, the loggers). One request
  * at a time per worker: Spiral keeps request state in the process (output buffers around every
- * controller and view, the native session, the ORM heap and the database connections).
+ * controller and view, the native session, the ORM heap and the database connections). What runs
+ * after handle() returned (a streamed body, a WebSocket callback) runs outside that turn and the
+ * request's scope, beside the requests that follow.
  */
 final class Handler implements RequestHandlerInterface
 {

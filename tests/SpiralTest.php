@@ -148,26 +148,3 @@ it('streams a controller that yields its body', function () {
     // The first chunk arrived before the last was produced, a second later
     expect((float) $m[1] - $firstArrived)->toBeGreaterThan(0.5);
 });
-
-it('holds a WebSocket from a controller', function () {
-    [$host, $port] = \explode(':', $GLOBALS['addr']);
-    $s             = \stream_socket_client("tcp://$host:$port", timeout: 5);
-    $key           = \base64_encode(\random_bytes(16));
-    \fwrite($s, "GET /swerve/ws HTTP/1.1\r\nHost: $host\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: $key\r\nSec-WebSocket-Version: 13\r\n\r\n");
-    $head = '';
-    while (!\str_contains($head, "\r\n\r\n")) {
-        $head .= \fread($s, 1);
-    }
-    expect($head)->toStartWith('HTTP/1.1 101')
-        ->and($head)->toContain(\base64_encode(\sha1($key . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11', true)));
-
-    // A masked text frame, as clients send
-    $mask = \random_bytes(4);
-    $text = 'hello';
-    \fwrite($s, "\x81" . \chr(0x80 | \strlen($text)) . $mask . ($text ^ \str_repeat($mask, 2)));
-    $frame = \fread($s, 2);
-    $reply = \fread($s, \ord($frame[1]) & 0x7F);
-    expect(\ord($frame[0]))->toBe(0x81)
-        ->and($reply)->toBe('echo: hello');
-    \fclose($s);
-});

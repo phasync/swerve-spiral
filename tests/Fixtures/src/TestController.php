@@ -2,7 +2,6 @@
 
 namespace App\SwerveTest;
 
-use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\UploadedFileInterface;
 use Spiral\Auth\AuthContextInterface;
@@ -13,7 +12,6 @@ use Spiral\Http\Request\InputManager;
 use Spiral\Router\Annotation\Route;
 use Spiral\Router\Router;
 use Spiral\Session\SessionScope;
-use Swerve\Http\WebSocket;
 
 /** The routes the tests of phasync/swerve-spiral use. */
 final class TestController
@@ -151,16 +149,6 @@ final class TestController
     {
         echo "stray output\n";
         yield 'ok';
-    }
-
-    #[Route(route: '/swerve/ws', name: 'swerve-ws', methods: ['GET'])]
-    public function ws(ServerRequestInterface $request): ResponseInterface
-    {
-        return WebSocket::from($request, static function (WebSocket $ws) {
-            foreach ($ws as $message) {
-                $ws->send("echo: $message");
-            }
-        });
     }
 
     #[Route(route: '/swerve/slow', name: 'swerve-slow', methods: ['GET'])]

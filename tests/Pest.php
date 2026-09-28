@@ -14,11 +14,14 @@
 function app_start(int $workers = 2, array $env = []): array
 {
     // A free port of 18900-18949, the range this suite may use on a shared machine
-    for ($port = 18900; false === $socket = @\stream_socket_server("tcp://127.0.0.1:$port"); ++$port) {
+    // (a handler rather than @: PHPUnit reports the suppressed warning of a port in use)
+    \set_error_handler(static fn () => true);
+    for ($port = 18900; false === $socket = \stream_socket_server("tcp://127.0.0.1:$port"); ++$port) {
         if ($port >= 18949) {
             throw new RuntimeException('No free port in 18900-18949');
         }
     }
+    \restore_error_handler();
     $addr = \stream_socket_get_name($socket, false);
     \fclose($socket);
     $log      = \tempnam(\sys_get_temp_dir(), 'swerve-log');
@@ -141,4 +144,75 @@ function http_all(string $addr, array &$requests): array
     }
 
     return $results;
+}
+
+/**
+ * Open a WebSocket to $path, as a browser does, with the cookies of $options (a browser's jar).
+ *
+ * @return resource the connection, after the 101
+ */
+function ws_connect(string $addr, string $path, array $options = [])
+{
+    [$host, $port] = \explode(':', $addr);
+    $s             = \stream_socket_client("tcp://$host:$port", timeout: 5);
+    \stream_set_timeout($s, 10);
+    $key    = \base64_encode(\random_bytes(16));
+    $cookie = ($options['cookies'] ?? []) ? 'Cookie: ' . \implode('; ', \array_map(static fn ($name, $value) => "$name=$value", \array_keys($options['cookies']), $options['cookies'])) . "\r\n" : '';
+    \fwrite($s, "GET $path HTTP/1.1\r\nHost: $host\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: $key\r\nSec-WebSocket-Version: 13\r\n$cookie\r\n");
+    $head = '';
+    while (!\str_contains($head, "\r\n\r\n") && '' !== ($byte = (string) \fread($s, 1))) {
+        $head .= $byte;
+    }
+    if (!\str_starts_with($head, 'HTTP/1.1 101') || !\str_contains($head, \base64_encode(\sha1($key . '258EAFA5-E914-47DA-95CA-C5AB0DC85B11', true)))) {
+        throw new RuntimeException("No WebSocket at $path:\n$head");
+    }
+
+    return $s;
+}
+
+/** Send one masked frame, as clients send: 1 text, 2 binary, 8 close. */
+function ws_send($s, int $opcode, string $payload): void
+{
+    $n    = \strlen($payload);
+    $mask = \random_bytes(4);
+    $head = \chr(0x80 | $opcode) . ($n < 126 ? \chr(0x80 | $n) : ($n < 65536 ? \chr(0x80 | 126) . \pack('n', $n) : \chr(0x80 | 127) . \pack('J', $n)));
+    \fwrite($s, $head . $mask . ($payload ^ \substr(\str_repeat($mask, \intdiv($n, 4) + 1), 0, $n)));
+}
+
+/**
+ * The next frame from the server, as [opcode, payload]; null when the connection ended.
+ *
+ * @return array{0: int, 1: string}|null
+ */
+function ws_read($s): ?array
+{
+    $read = static function (int $n) use ($s): ?string {
+        $bytes = '';
+        while (\strlen($bytes) < $n) {
+            $chunk = \fread($s, $n - \strlen($bytes));
+            if (false === $chunk || '' === $chunk) {
+                return null;
+            }
+            $bytes .= $chunk;
+        }
+
+        return $bytes;
+    };
+    if (null === $head = $read(2)) {
+        return null;
+    }
+    $n = \ord($head[1]) & 0x7F;
+    if (126 === $n) {
+        $n = \unpack('n', $read(2))[1];
+    } elseif (127 === $n) {
+        $n = \unpack('J', $read(8))[1];
+    }
+
+    return [\ord($head[0]) & 0x0F, $n > 0 ? $read($n) : ''];
+}
+
+/** The lines of a swerve log that report a problem. */
+function log_problems(string $log): array
+{
+    return \array_values(\array_filter(\explode("\n", \file_get_contents($log)), static fn ($line) => \preg_match('/error|exception|warning|fatal/i', $line)));
 }

@@ -16,8 +16,7 @@ it('finishes a slow request on SIGTERM, and logs no error', function () {
     expect($response)->toStartWith('HTTP/1.1 200')
         ->and($response)->toEndWith('slow done');
     expect(app_wait($proc, 5))->toBe(0);
-    $lines = \array_filter(\explode("\n", \file_get_contents($log)), static fn ($line) => \preg_match('/error|exception|warning|fatal/i', $line));
-    expect($lines)->toBe([]);
+    expect(log_problems($log))->toBe([]);
 });
 
 it('keeps memory flat over 10,000 requests', function () {
