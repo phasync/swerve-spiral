@@ -29,6 +29,16 @@ final class TestController
     }
 
     /** The token a form would carry. */
+    /** A wait of ?ms= (default 10) in usleep(), as a database query waits: it blocks the worker without phasync-ext. */
+    #[Route(route: '/swerve/usleep', name: 'swerve-usleep', methods: ['GET'])]
+    public function usleep(ServerRequestInterface $request): array
+    {
+        $ms = (int) ($request->getQueryParams()['ms'] ?? 10);
+        \usleep(1000 * $ms);
+
+        return ['waited' => $ms];
+    }
+
     #[Route(route: '/swerve/form', name: 'swerve-form', methods: ['GET'])]
     public function form(ServerRequestInterface $request): string
     {
