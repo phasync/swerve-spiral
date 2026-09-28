@@ -30,6 +30,86 @@ That's the whole setup. `app.php` stays as it is, so the same application still 
 RoadRunner. A kernel or exception handler other than the skeleton's `App\Application\Kernel` and
 `App\Application\Exception\Handler` goes in as `kernel:` and `exceptionHandler:`.
 
+## WebSockets
+
+A controller action returns `Swerve\Http\WebSocket::from()`: a `101` and a callback that runs
+on the connection, or a `426` for an ordinary request to the same route.
+
+```php
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Spiral\Router\Annotation\Route;
+use Swerve\Http\WebSocket;
+
+final class EchoController
+{
+    #[Route(route: '/echo', name: 'echo', methods: ['GET'])]
+    public function echo(ServerRequestInterface $request): ResponseInterface
+    {
+        return WebSocket::from($request, static function (WebSocket $ws) {
+            foreach ($ws as $message) {                 // ends when the connection closes
+                $ws->isBinary() ? $ws->sendBinary($message) : $ws->send("echo: $message");
+            }
+        });
+    }
+}
+```
+
+**Server push.** `Swerve::subscribe()` receives what any worker publishes, so an ordinary action
+reaches the sockets of every worker:
+
+```php
+use Swerve\Swerve;
+
+#[Route(route: '/news', name: 'news', methods: ['GET'])]
+public function news(ServerRequestInterface $request): ResponseInterface
+{
+    return WebSocket::from($request, static function (WebSocket $ws) {
+        foreach (Swerve::subscribe('news') as $message) {
+            $ws->send($message);
+        }
+    });
+}
+
+#[Route(route: '/news', name: 'news-post', methods: ['POST'])]
+public function post(InputManager $input): string
+{
+    Swerve::publish('news', (string) $input->data('text'));
+
+    return 'sent';
+}
+```
+
+The callback ends when its client leaves, with or without a close frame, and a shutdown or
+reload closes every socket with `1001`.
+
+**The user.** The callback runs after the request has ended, outside its scope. Take what it
+needs in the action:
+
+```php
+#[Route(route: '/chat', name: 'chat', methods: ['GET'])]
+public function chat(ServerRequestInterface $request, AuthContextInterface $auth, SessionScope $session): ResponseInterface
+{
+    $user = $auth->getActor() ?? throw new ForbiddenException();
+    $room = $session->getSection('chat')->get('room', 'lobby');
+
+    return WebSocket::from($request, static function (WebSocket $ws) use ($user, $room) {
+        // $user and $room, not $auth or $session
+    });
+}
+```
+
+Inside the callback the session is out of scope (`ContainerException: Proxy is out of scope`),
+and `ContainerScope::getContainer()` is null, also while another request runs in the worker:
+Spiral never hands the callback another request's scope. Leave the ORM alone there too.
+
+Open sockets don't hold the worker: the tests keep 250 on one worker, half of them forwarding a
+subscription, while it answers ordinary requests at once. Two caveats of swerve 0.1.0-alpha15:
+messages published through different workers may reach subscribers in another order than they
+were published ([phasync/swerve#5](https://github.com/phasync/swerve/issues/5)), and a client
+that resets its connection logs an error, harmlessly
+([phasync/swerve#6](https://github.com/phasync/swerve/issues/6)).
+
 ## What changes
 
 The Spiral skeleton, 4 workers, opcache on, production settings, `wrk -t4 -c64 -d10s`:
@@ -77,8 +157,8 @@ request handling, about 85% of a worker's time. [Method and raw results](benchma
   Server-Sent Events or thousands of connections, not for Spiral's pages.
 - Code that runs after the controller returned (a generator body, a Server-Sent Events producer, a
   WebSocket callback) runs outside the request's scope while the worker serves other requests.
-  Take what it needs from the container in the controller, and leave the ORM and the session
-  alone there.
+  Take the user and session data it needs in the controller, and leave the ORM and the session
+  alone there (see [WebSockets](#websockets)).
 - Pages that start a session don't get the no-cache headers PHP-FPM adds (`session.cache_limiter`),
   as under RoadRunner. Add them in a middleware if a cache sits in front.
 - Spiral's file session handler has no lock: one session used by requests on several workers at
