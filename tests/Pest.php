@@ -43,12 +43,23 @@ function app_start(int $workers = 2, array $env = []): array
 function app_stop($proc): int
 {
     \proc_terminate($proc, \SIGTERM);
-    $deadline = \microtime(true) + 10;
-    while (\proc_get_status($proc)['running'] && \microtime(true) < $deadline) {
+
+    return app_wait($proc, 10);
+}
+
+/**
+ * Wait for swerve to exit and return its exit code: from the last proc_get_status(), since
+ * proc_close() returns -1 once that has seen the exit (PHP 8.2).
+ */
+function app_wait($proc, float $timeout): int
+{
+    $deadline = \microtime(true) + $timeout;
+    while (($status = \proc_get_status($proc))['running'] && \microtime(true) < $deadline) {
         \usleep(50_000);
     }
+    \proc_close($proc);
 
-    return \proc_close($proc);
+    return $status['exitcode'];
 }
 
 /**

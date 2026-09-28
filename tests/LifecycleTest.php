@@ -15,10 +15,7 @@ it('finishes a slow request on SIGTERM, and logs no error', function () {
     \fclose($s);
     expect($response)->toStartWith('HTTP/1.1 200')
         ->and($response)->toEndWith('slow done');
-    for ($deadline = \microtime(true) + 5; \proc_get_status($proc)['running'] && \microtime(true) < $deadline;) {
-        \usleep(50_000);
-    }
-    expect(\proc_close($proc))->toBe(0);
+    expect(app_wait($proc, 5))->toBe(0);
     $lines = \array_filter(\explode("\n", \file_get_contents($log)), static fn ($line) => \preg_match('/error|exception|warning|fatal/i', $line));
     expect($lines)->toBe([]);
 });
