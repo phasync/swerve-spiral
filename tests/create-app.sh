@@ -25,7 +25,7 @@ if [ -n "${SWERVE_PATH:-}" ]; then
     version=$(git -C "$SWERVE_PATH" describe --tags --abbrev=0)
     composer config repositories.swerve "{\"type\": \"path\", \"url\": \"$SWERVE_PATH\", \"options\": {\"symlink\": false, \"versions\": {\"phasync/swerve\": \"$version\"}}}"
 fi
-composer require --no-interaction --no-progress 'phasync/swerve:^0.1.0-alpha13'
+composer require --no-interaction --no-progress 'phasync/swerve:^0.1.0-alpha15'
 
 # The test routes, and Spiral's authentication (tokens in the session) for them
 mkdir -p app/src/SwerveTest
