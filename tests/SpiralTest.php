@@ -148,3 +148,9 @@ it('streams a controller that yields its body', function () {
     // The first chunk arrived before the last was produced, a second later
     expect((float) $m[1] - $firstArrived)->toBeGreaterThan(0.5);
 });
+
+it("answers a warning with Spiral's error page: its error handler turns it into an ErrorException", function () {
+    $r = http($GLOBALS['addr'], 'GET', '/swerve/warning');
+    expect($r['status'])->toBe(500)
+        ->and($r['body'])->toContain('ErrorException');
+});

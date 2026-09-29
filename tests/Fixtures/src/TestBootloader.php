@@ -25,6 +25,7 @@ final class TestBootloader extends Bootloader
     public function boot(GroupRegistry $groups): void
     {
         $groups->getGroup('web')->addMiddleware(AuthMiddleware::class);
+        $groups->getGroup('web')->addMiddleware(CurrentRequestMiddleware::class);
         $groups->getGroup('csrf')
             ->addMiddleware('middleware:web')
             ->addMiddleware(AuthMiddleware::class)

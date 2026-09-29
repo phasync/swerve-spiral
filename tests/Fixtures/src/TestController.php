@@ -2,6 +2,8 @@
 
 namespace App\SwerveTest;
 
+use Cycle\ORM\Heap\Node;
+use Cycle\ORM\ORMInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\UploadedFileInterface;
 use Spiral\Auth\AuthContextInterface;
@@ -72,9 +74,10 @@ final class TestController
     #[Route(route: '/swerve/iso/<v>', name: 'swerve-iso', methods: ['GET'])]
     public function isolation(string $v, ServerRequestInterface $request, InputManager $input, SessionScope $session, AuthContextInterface $auth): array
     {
-        $section = $session->getSection('iso');
-        $before  = $section->get('mine');
-        $section->set('mine', $v);
+        // ?session=0: none of the session, for what leaks besides it
+        $section = '0' === ($request->getQueryParams()['session'] ?? null) ? null : $session->getSection('iso');
+        $before  = $section?->get('mine');
+        $section?->set('mine', $v);
         self::nap(0.2);
 
         return [
@@ -84,9 +87,9 @@ final class TestController
             'input'   => $input->query('v'),
             'scope'   => ContainerScope::getContainer()->get(ServerRequestInterface::class)->getQueryParams()['v'] ?? null,
             'actor'   => $auth->getActor()?->name,
-            'session' => $section->get('mine'),
+            'session' => $section?->get('mine'),
             'before'  => $before,
-            'sid'     => $session->getID(),
+            'sid'     => $section ? $session->getID() : null,
         ];
     }
 
@@ -97,6 +100,30 @@ final class TestController
         echo "before-$v ";
         self::nap(0.2);
         echo "after-$v";
+    }
+
+    /**
+     * An entity in the ORM's heap (its identity map), then a wait: is it still there, and whose
+     * entities are there?
+     */
+    #[Route(route: '/swerve/orm/<v>', name: 'swerve-orm', methods: ['GET'])]
+    public function orm(string $v, ORMInterface $orm): array
+    {
+        $user = $orm->make(\App\Domain\User\Entity\User::class, ['id' => \crc32($v), 'username' => $v, 'email' => "$v@example.com"], Node::MANAGED);
+        self::nap(0.2);
+        $heap = [];
+        foreach ($orm->getHeap() as $entity) {
+            $heap[] = $entity->getUsername();
+        }
+
+        return ['mine' => $orm->getHeap()->has($user), 'heap' => $heap];
+    }
+
+    /** A warning, which Spiral's error handler turns into an ErrorException */
+    #[Route(route: '/swerve/warning', name: 'swerve-warning', methods: ['GET'])]
+    public function warning(): string
+    {
+        return (string) \file_get_contents('/nonexistent/swerve');
     }
 
     #[Route(route: '/swerve/counter', name: 'swerve-counter', methods: ['GET'])]
