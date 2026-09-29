@@ -136,13 +136,13 @@ request handling, about 85% of a worker's time. [Method and raw results](benchma
   controller that yields its body streams. An exception that gets through the pipeline is
   reported to Spiral's exception handler and answered with a 500. Then the finalizers run: the
   Cycle ORM heap and entity manager are cleaned and the loggers reset.
-- **Concurrency:** one request at a time per worker (`phasync\Util\Synchronized`). Spiral keeps
-  request state in the process: an output buffer around every controller and view (two
-  overlapping requests get each other's output), PHP's native session (a second
-  `session_start()` throws `MultipleSessionException`), and the ORM heap and database
-  connections as singletons that the finalizers clear after each request. Its container scopes
-  are fiber-safe, but that is not enough. Static files, streamed bodies, Server-Sent Events and
-  WebSockets are served alongside, since they run after `handle()` returned.
+- **Concurrency:** one request at a time per worker (`phasync\Util\Synchronized`). Overlapping
+  requests would share Spiral's output buffers around every controller and view (two requests get
+  each other's output), PHP's native session (a second `session_start()` throws
+  `MultipleSessionException`), the ORM heap that the finalizers clean after each request, and the
+  current request of the `http` scope. Its container scopes keep apart. Tests and details:
+  [docs/concurrency.md](docs/concurrency.md). Static files, streamed bodies, Server-Sent Events
+  and WebSockets are served alongside, since they run after `handle()` returned.
 - **Sessions:** Spiral's own, with the handler in `app/config/session.php`. Spiral gives every request
   its session id, a new one for a visitor without a cookie, so none carries over. What is echoed
   outside a controller goes to swerve's terminal past PHP's output layer, which would otherwise
