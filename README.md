@@ -27,6 +27,8 @@ scales with `--workers`, as with RoadRunner. Details: [docs/concurrency.md](docs
 The framework running correctly on swerve does not mean your application does: state your own
 code keeps in statics, globals or shared services, and connections shared between requests, need
 the same care. See [Making your application safe for concurrent requests](https://phasync.github.io/guides/concurrent-requests-in-your-application/).
+[phasync/doctor](https://github.com/phasync/doctor) lists the candidates in your code:
+`composer require --dev phasync/doctor`, then `vendor/bin/phasync-doctor`.
 
 That's the whole setup. `--adapter=spiral` picks this adapter over swerve-psr15's, which comes
 with it (or put `"extra": {"swerve": {"adapter": "spiral"}}` in your `composer.json`). `app.php`
