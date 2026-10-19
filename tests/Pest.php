@@ -3,7 +3,7 @@
 /*
  * The tests run the Spiral application in tests/Fixtures/app (made by tests/create-app.sh) on a
  * real swerve, the way users run it. SWERVE_PHP_ARGS adds PHP options, such as loading
- * phasync-ext: CI runs the suite without and with it.
+ * ext-phasync: CI runs the suite without and with it.
  */
 
 /**
@@ -27,7 +27,7 @@ function app_start(int $workers = 2, array $env = []): array
     $log      = \tempnam(\sys_get_temp_dir(), 'swerve-log');
     $app      = __DIR__ . '/Fixtures/app';
     $php      = \trim((string) \getenv('SWERVE_PHP_ARGS'));
-    $cmd      = 'exec ' . \PHP_BINARY . " $php " . \escapeshellarg("$app/vendor/bin/swerve") . " --workers=$workers --grace=2 --http=$addr --log=" . \escapeshellarg($log) . ' ' . \escapeshellarg("$app/swerve.php");
+    $cmd      = 'exec ' . \PHP_BINARY . " $php " . \escapeshellarg("$app/vendor/bin/swerve") . " --adapter=swerve --workers=$workers --grace=2 --http=$addr --log=" . \escapeshellarg($log) . ' ' . \escapeshellarg("$app/swerve.php");
     $proc     = \proc_open($cmd, [['file', '/dev/null', 'r'], ['file', '/dev/null', 'w'], ['file', '/dev/null', 'w']], $pipes, $app, $env + \getenv());
     $deadline = \microtime(true) + 20;
     $probe    = \curl_init("http://$addr/");

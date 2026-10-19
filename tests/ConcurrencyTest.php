@@ -60,7 +60,7 @@ it('keeps the ORM heap apart, and one request\'s finalizers off another\'s', fun
     }
 });
 
-it('serves one request at a time per worker, with or without phasync-ext', function () {
+it('serves one request at a time per worker, with or without ext-phasync', function () {
     $t = \microtime(true);
     overlapping(static fn ($v) => "/swerve/iso/$v?v=$v&session=0");
     expect(\microtime(true) - $t)->toBeGreaterThan(0.8)

@@ -1,0 +1,19 @@
+version: '3'
+rpc:
+    listen: 'tcp://127.0.0.1:18911'
+server:
+    command: 'php -d opcache.enable_cli=1 app.php'
+    relay: pipes
+http:
+    address: '127.0.0.1:18910'
+    middleware: [gzip, static]
+    static:
+        dir: public
+        forbid: [.php, .htaccess]
+    pool:
+        num_workers: 4
+        supervisor:
+            max_worker_memory: 100
+logs:
+    mode: production
+    level: error

@@ -1,5 +1,5 @@
 # Changelog
 
-## 0.1.0-alpha1
+## 0.1.0 (2026-10-19)
 
-- First release: Spiral 3 on swerve.
+The first release.

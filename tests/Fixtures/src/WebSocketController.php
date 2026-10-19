@@ -10,8 +10,9 @@ use Spiral\Core\ContainerScope;
 use Spiral\Http\Request\InputManager;
 use Spiral\Router\Annotation\Route;
 use Spiral\Session\SessionScope;
-use Swerve\Http\WebSocket;
+use Swerve\Psr15\WebSocketResponse;
 use Swerve\Swerve;
+use Swerve\WebSocket;
 
 /** The WebSocket routes the tests of phasync/swerve-spiral use. */
 final class WebSocketController
@@ -24,7 +25,7 @@ final class WebSocketController
     #[Route(route: '/swerve/ws', name: 'swerve-ws', methods: ['GET'])]
     public function echo(ServerRequestInterface $request): ResponseInterface
     {
-        return WebSocket::from($request, static function (WebSocket $ws) {
+        return WebSocketResponse::from($request, static function (WebSocket $ws) {
             foreach ($ws as $message) {
                 $ws->isBinary() ? $ws->sendBinary($message) : $ws->send("echo: $message");
             }
@@ -37,7 +38,7 @@ final class WebSocketController
     {
         $open = $this->openDir();
 
-        return WebSocket::from($request, static function (WebSocket $ws) use ($open) {
+        return WebSocketResponse::from($request, static function (WebSocket $ws) use ($open) {
             // One file per running callback: the count of callbacks, over every worker
             $file = \tempnam($open, 'ws');
             try {
@@ -66,14 +67,14 @@ final class WebSocketController
         return 'published';
     }
 
-    /** The user and the session's data, taken from the request before WebSocket::from(). */
+    /** The user and the session's data, taken from the request before WebSocketResponse::from(). */
     #[Route(route: '/swerve/ws/me', name: 'swerve-ws-me', methods: ['GET'])]
     public function me(ServerRequestInterface $request, AuthContextInterface $auth, SessionScope $session): ResponseInterface
     {
         $user = $auth->getActor()?->name ?? 'guest';
         $mine = $session->getSection('iso')->get('mine');
 
-        return WebSocket::from($request, static function (WebSocket $ws) use ($user, $mine) {
+        return WebSocketResponse::from($request, static function (WebSocket $ws) use ($user, $mine) {
             foreach ($ws as $message) {
                 $ws->send(\json_encode(['user' => $user, 'session' => $mine, 'message' => $message]));
             }
@@ -87,7 +88,7 @@ final class WebSocketController
     #[Route(route: '/swerve/ws/me-late', name: 'swerve-ws-me-late', methods: ['GET'])]
     public function meLate(ServerRequestInterface $request, AuthContextInterface $auth, SessionScope $session): ResponseInterface
     {
-        return WebSocket::from($request, static function (WebSocket $ws) use ($auth, $session) {
+        return WebSocketResponse::from($request, static function (WebSocket $ws) use ($auth, $session) {
             foreach ($ws as $message) {
                 $ws->send(\json_encode([
                     'user'    => self::attempt(static fn () => $auth->getActor()?->name ?? 'guest'),

@@ -11,44 +11,57 @@ request and response bodies, and hold WebSockets and Server-Sent Events. This pa
 run a Spiral application unchanged.
 
 ```bash
-composer config minimum-stability beta   # while swerve is in beta
-composer config prefer-stable true         # everything else stays stable
 composer require phasync/swerve-spiral
 ```
+
+```bash
+vendor/bin/swerve --adapter=spiral --http=0.0.0.0:8080 --public=public
+```
+
+A worker serves one request at a time: a request waiting on a database or API holds its worker
+until it returns. Each request still gets its own Spiral `ContainerScope`, swapped by
+`phasync::onScopeChange()`, so code that runs after another request's `handle()` has returned (a
+WebSocket callback, a Server-Sent Events body) never sees that request's container. Capacity
+scales with `--workers`, as with RoadRunner. Details: [docs/concurrency.md](docs/concurrency.md).
+
+The framework running correctly on swerve does not mean your application does: state your own
+code keeps in statics, globals or shared services, and connections shared between requests, need
+the same care. See [Making your application safe for concurrent requests](https://phasync.github.io/guides/concurrent-requests-in-your-application/).
+
+That's the whole setup. `--adapter=spiral` picks this adapter over swerve-psr15's, which comes
+with it (or put `"extra": {"swerve": {"adapter": "spiral"}}` in your `composer.json`). `app.php`
+stays as it is, so the same application still runs under RoadRunner. A kernel or exception
+handler other than the skeleton's `App\Application\Kernel` and `App\Application\Exception\Handler`
+goes in as `kernel:` and `exceptionHandler:`, in a `swerve.php` run with `--adapter=swerve`:
 
 ```php
 <?php // swerve.php, next to composer.json
 
-require __DIR__ . '/vendor/autoload.php';
-
-return new Swerve\Spiral\Handler(__DIR__);
+return Swerve\Psr15\Bridge::wrap(new Swerve\Spiral\Handler(__DIR__, kernel: App\MyKernel::class));
 ```
 
-```bash
-vendor/bin/swerve --http=0.0.0.0:8080 --public=public swerve.php
-```
-
-That's the whole setup. `app.php` stays as it is, so the same application still runs under
-RoadRunner. A kernel or exception handler other than the skeleton's `App\Application\Kernel` and
-`App\Application\Exception\Handler` goes in as `kernel:` and `exceptionHandler:`.
+The handler is a PSR-15 request handler, served by [swerve-psr15](https://github.com/phasync/swerve-psr15)'s
+`Bridge`.
 
 ## WebSockets
 
-A controller action returns `Swerve\Http\WebSocket::from()`: a `101` and a callback that runs
-on the connection, or a `426` for an ordinary request to the same route.
+A controller action returns swerve-psr15's `WebSocketResponse::from()`: a `101` and a callback
+that gets swerve's `WebSocket` and runs on the connection, or a `426` for an ordinary request to
+the same route.
 
 ```php
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Spiral\Router\Annotation\Route;
-use Swerve\Http\WebSocket;
+use Swerve\Psr15\WebSocketResponse;
+use Swerve\WebSocket;
 
 final class EchoController
 {
     #[Route(route: '/echo', name: 'echo', methods: ['GET'])]
     public function echo(ServerRequestInterface $request): ResponseInterface
     {
-        return WebSocket::from($request, static function (WebSocket $ws) {
+        return WebSocketResponse::from($request, static function (WebSocket $ws) {
             foreach ($ws as $message) {                 // ends when the connection closes
                 $ws->isBinary() ? $ws->sendBinary($message) : $ws->send("echo: $message");
             }
@@ -66,7 +79,7 @@ use Swerve\Swerve;
 #[Route(route: '/news', name: 'news', methods: ['GET'])]
 public function news(ServerRequestInterface $request): ResponseInterface
 {
-    return WebSocket::from($request, static function (WebSocket $ws) {
+    return WebSocketResponse::from($request, static function (WebSocket $ws) {
         foreach (Swerve::subscribe('news') as $message) {
             $ws->send($message);
         }
@@ -95,7 +108,7 @@ public function chat(ServerRequestInterface $request, AuthContextInterface $auth
     $user = $auth->getActor() ?? throw new ForbiddenException();
     $room = $session->getSection('chat')->get('room', 'lobby');
 
-    return WebSocket::from($request, static function (WebSocket $ws) use ($user, $room) {
+    return WebSocketResponse::from($request, static function (WebSocket $ws) use ($user, $room) {
         // $user and $room, not $auth or $session
     });
 }
@@ -106,25 +119,9 @@ and `ContainerScope::getContainer()` is null, also while another request runs in
 Spiral never hands the callback another request's scope. Leave the ORM alone there too.
 
 Open sockets don't hold the worker: the tests keep 250 on one worker, half of them forwarding a
-subscription, while it answers ordinary requests at once. Two caveats of swerve 0.1.0-alpha15:
-messages published through different workers may reach subscribers in another order than they
-were published ([phasync/swerve#5](https://github.com/phasync/swerve/issues/5)), and a client
-that resets its connection logs an error, harmlessly
-([phasync/swerve#6](https://github.com/phasync/swerve/issues/6)).
-
-## What changes
-
-The Spiral skeleton, 4 workers, opcache on, production settings, `wrk -t4 -c64 -d10s`:
-
-| Requests per second | PHP-FPM | RoadRunner | swerve | swerve + phasync-ext |
-|---|---:|---:|---:|---:|
-| Home page | 241 | 2,402 | 2,283 | 2,292 |
-| JSON route | 242 | 2,525 | 2,389 | 2,394 |
-| Page with session | 236 | 2,114 | 2,050 | 1,749 |
-
-Under PHP-FPM Spiral boots for every request. swerve boots it once, as RoadRunner does, and
-serves 9 to 10 times as much, within 6% of RoadRunner; what a request costs now is Spiral's own
-request handling, about 85% of a worker's time. [Method and raw results](benchmarks/).
+subscription, while it answers ordinary requests at once. Messages from one publisher reach every
+subscriber in the order it published them; there is no order between different workers'
+publishers unless they publish through a `Swerve\OrderedChannel`.
 
 ## How it runs
 
@@ -140,9 +137,12 @@ request handling, about 85% of a worker's time. [Method and raw results](benchma
   requests would share Spiral's output buffers around every controller and view (two requests get
   each other's output), PHP's native session (a second `session_start()` throws
   `MultipleSessionException`), the ORM heap that the finalizers clean after each request, and the
-  current request of the `http` scope. Its container scopes keep apart. Tests and details:
-  [docs/concurrency.md](docs/concurrency.md). Static files, streamed bodies, Server-Sent Events
-  and WebSockets are served alongside, since they run after `handle()` returned.
+  current request of the `http` scope. `ContainerScope`'s current container is kept apart
+  regardless of the lock: a `phasync::onScopeChange()` hook swaps it per request, so code that
+  runs after `handle()` has returned (a WebSocket callback, a Server-Sent Events body) never sees
+  another request's container. Tests and details: [docs/concurrency.md](docs/concurrency.md).
+  Static files, streamed bodies, Server-Sent Events and WebSockets are served alongside, since
+  they run after `handle()` returned.
 - **Sessions:** Spiral's own, with the handler in `app/config/session.php`. Spiral gives every request
   its session id, a new one for a visitor without a cookie, so none carries over. What is echoed
   outside a controller goes to swerve's terminal past PHP's output layer, which would otherwise
@@ -151,11 +151,14 @@ request handling, about 85% of a worker's time. [Method and raw results](benchma
 ## Before you deploy
 
 - `exit` and `dd()` end the worker, and the request it is serving with it.
+- **A stop ends the requests in flight.** On a shutdown or reload swerve stops a worker at once:
+  a request still waiting then ends, answered `503` by swerve when nothing was sent yet (Spiral's
+  error middleware still reports it); clients retry.
 - A worker serves one request at a time, as a RoadRunner worker does: give swerve as many
   workers as RoadRunner's `num_workers`. A request waiting for an API holds its worker, with or
-  without phasync-ext.
-- phasync-ext makes the file session handler's reads and writes wait as coroutines, with nothing
-  else to run meanwhile: the session page was 15% slower with it. Load it for WebSockets,
+  without ext-phasync.
+- ext-phasync makes the file session handler's reads and writes wait as coroutines, with nothing
+  else to run meanwhile, since a worker serves one request at a time: load it for WebSockets,
   Server-Sent Events or thousands of connections, not for Spiral's pages.
 - Code that runs after the controller returned (a generator body, a Server-Sent Events producer, a
   WebSocket callback) runs outside the request's scope while the worker serves other requests.
@@ -166,13 +169,10 @@ request handling, about 85% of a worker's time. [Method and raw results](benchma
 - Spiral's file session handler has no lock: one session used by requests on several workers at
   once fails now and then with a 500, as under RoadRunner. Use a handler that locks if clients
   send many requests at once.
-- Each worker's shutdown writes `stream_socket_accept(): Accept failed` to standard error and to
-  the application's error log: Spiral's shutdown handler reports an error swerve silenced
-  ([phasync/swerve#2](https://github.com/phasync/swerve/issues/2)). It is harmless.
 
 ## Compatibility
 
-| Spiral | PHP | phasync-ext |
+| Spiral | PHP | ext-phasync |
 |---|---|---|
 | 3.15 and later, tested with 3.17 (`spiral/app` 3.9 on PHP 8.4+, 3.8 below) | 8.2 – 8.5 | optional; tested with and without |
 

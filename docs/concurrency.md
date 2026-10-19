@@ -1,76 +1,85 @@
 # Concurrency
 
 The adapter serves one request at a time per worker (`phasync\Util\Synchronized` around
-`Http::handle()`, `src/Handler.php:95`). A request waiting for a database or an API holds its
-worker, with or without phasync-ext: give swerve as many workers as RoadRunner's `num_workers`.
+`Http::handle()`, `src/Handler.php`). A request waiting for a database or an API holds its
+worker, with or without ext-phasync: give swerve as many workers as RoadRunner's `num_workers`.
 Static files, streamed bodies, Server-Sent Events and WebSockets are served alongside, since they
 run after `handle()` returned.
 
 Paths below are in `vendor/spiral/framework/src/` unless they name another package.
 `tests/ConcurrencyTest.php` sends four requests at once to one worker; each stores a value of its
-own, waits 200 ms (in `usleep()` with phasync-ext, `phasync::sleep()` without), and reads it back.
-With the lock they pass. The results quoted are from the same tests with the lock removed; each
-leak showed without phasync-ext and with it.
+own, waits, and reads it back, to check that none of the state below is shared between them.
 
-## Why
+## Why a request holds its worker
 
 **Output buffers.** `CoreHandler::handle()` opens a buffer around every controller
-(`Router/src/CoreHandler.php:98`) and on the way out collects every buffer above its own level
-(`:150`); the view engines do the same. The first request's body was
-`before-user0 before-user1 before-user2 before-user3 after-user0`, the others' empty. The adapter's
-own buffer went with them, so output reached the terminal, PHP counted the headers as sent, and
-every request with a session failed with `session_set_save_handler(): Session save handler cannot
-be changed after headers have already been sent` until the worker restarted
-(test: *keeps what controllers echo apart*).
+(`Router/src/CoreHandler.php`) and on the way out collects every buffer above its own level; the
+view engines do the same. Two requests sharing that stack would mix one controller's or view's
+`echo` into another's response, and the adapter's own buffer (which turns what a controller
+echoes into swerve's output, past PHP's output layer) would go with them, making
+`session_set_save_handler()` fail for the rest of the worker's life.
 
 **The native session.** `SessionFactory::initSession()` refuses a second active session
-(`Session/src/SessionFactory.php:29`), and `Session` keeps the data in `$_SESSION` after
-`session_start()` (`Session/src/Session.php:72`). Three of four requests failed with
-`MultipleSessionException` (test: *keeps the session and the logged-in user apart*).
+(`Session/src/SessionFactory.php`), and `Session` keeps the data in `$_SESSION` after
+`session_start()` (`Session/src/Session.php`). A second concurrent request would throw
+`MultipleSessionException`.
 
 **The ORM heap and entity manager.** Cycle's `ORMInterface` and `EntityManagerInterface` are
-singletons of the application (`cycle-bridge/src/Bootloader/CycleOrmBootloader.php:37`), and the
-finalizer the adapter runs after each request cleans both (`:51-63`). The first request found all
-four requests' entities in its heap; the other three found their own gone, cleaned by the first
-request's finalizer (test: *keeps the ORM heap apart*).
+singletons of the application (`cycle-bridge/src/Bootloader/CycleOrmBootloader.php`), and the
+finalizer the adapter runs after each request cleans both. An overlapping request would find its
+entities cleaned by another request's finalizer, or share its heap with it.
 
 **The `http` scope's current request.** `CurrentRequest` is a singleton of the `http` scope
-(`Framework/Bootloader/Http/HttpBootloader.php:67`), which the adapter keeps open for the worker's
+(`Framework/Bootloader/Http/HttpBootloader.php`), which the adapter keeps open for the worker's
 life, as Spiral's RoadRunner dispatcher does; `ServerRequestInterface` there, and with it
-`SessionScope` and the other scoped services used from middleware, resolve through it (`:69-78`),
-and every pipeline step sets it (`Http/src/Pipeline.php:69-72`). A middleware reading the request
-after a wait got another request's: `user3`, `user0`, `user1`, `user2` for requests 0 to 3
-(test: *keeps the request apart*).
+`SessionScope` and the other scoped services used from middleware, resolve through it, and every
+pipeline step sets it (`Http/src/Pipeline.php`). A middleware reading the request after a wait
+would get whichever request set it last.
 
-## Not reasons
+A lock around all of `Http::handle()` is what keeps them apart: the buffer opens before the
+controller and closes after it, the session is active from its first use until the middleware
+commits it, and the heap holds the request's entities until its finalizer runs.
 
-- **`ContainerScope`'s current container** (`Core/src/ContainerScope.php:19`) is a static, but
-  `runScope()` runs the scope in a fiber and swaps the static at each suspension and resume
-  (`:44-63`), so each request sees its own. The tests read it after the wait in every
-  configuration (without and with phasync-ext, and with `virtualize()`) and found no leak. Keeping
-  it in `phasync::getContext()` instead would need a change to Spiral (the class is final, the
-  property private) and would fix nothing.
-- **Route parameters, input and the logged-in user**: they live on the PSR-7 request
-  (`AuthHttp/src/Middleware/AuthMiddleware.php:45-51`) or in the per-request `http-request` scope
-  (`Router/src/CoreHandler.php:114`). No test found them leaking.
+## Container scope, kept apart without the lock
 
-## phasync-ext's `virtualize()`
+`ContainerScope`'s current container (`Core/src/ContainerScope.php`) is a static. The adapter
+swaps it itself, with a `phasync::onScopeChange()` hook keyed by each request's `Scope`
+(`src/Handler.php`), so the container a request's coroutines see is always its own - including a
+WebSocket callback or a Server-Sent Events body still running after its own request returned,
+while another request is being handled on the same worker. This holds regardless of the lock
+above; it is not something the lock is needed for.
 
-Run inside `virtualize()` (as `Swerve\Http\Virtual::run()` does), each request has its own output
-buffers and native session state: the output test passes, and `MultipleSessionException` is gone.
-`$_SESSION` stays one global variable, bound by the latest `session_start()`: all four requests
-read back `user3`. The ORM and the current request are objects of the application, which
-`virtualize()` does not separate: those two tests fail as without it.
+Route parameters, input and the logged-in user live on the PSR-7 request
+(`AuthHttp/src/Middleware/AuthMiddleware.php`) or in the per-request `http-request` scope
+(`Router/src/CoreHandler.php`), both already request-local, not process-wide.
 
-## What else was tried
+## What a user can do
 
-- **A pool of applications**, one per overlapping request, as swerve-symfony pools its kernels:
-  the ORM and current-request tests pass; each kernel beyond the first costs 12 ms and 1.5 MB with
-  the skeleton's production settings (330 ms with its development `.env`). The output and session
-  tests fail as before, without `virtualize()`.
-- **The `http` scope opened per request** instead of once per worker: the current-request test
-  passes; the ORM test fails as before.
-- **A narrower lock**: the shared state spans the request. Spiral's buffer opens before the
-  controller and closes after it, the session is active from its first use until the middleware
-  commits it after the controller, and the heap holds the request's entities until its
-  finalizer runs. A lock covering all of them covers `Http::handle()`.
+Capacity scales with `--workers`: each one runs the application's own copy and serves one request
+at a time, so N workers serve N requests at once, as RoadRunner does with the same worker count.
+A request that waits on a database or an API holds its worker for that wait, with or without
+ext-phasync loaded. Open WebSocket and Server-Sent Events connections do not hold a worker; a
+generator body or a WebSocket callback runs after `handle()` returns, alongside the requests that
+follow.
+
+## What could remove the lock
+
+The simple fix for state like the container scope above is to swap it per request with
+`phasync::onScopeChange()`, as the adapter already does for `ContainerScope`. The same technique
+could be used for the rest of this page's state - a buffer, `$_SESSION`, the ORM heap, the
+current request - if each were replaced by a reference the application swaps on every scope
+change. It has real limits: it is specific to phasync, not to fiber-interop/ext-scope or the
+Scope RFC it follows; the hook runs on every switch between requests on a worker, so only a few
+references should be swapped in it; it only covers state the application swaps itself, so a
+library's own statics still leak between requests; and an application built on it runs on phasync
+only, not on another fiber-based server.
+
+The proper fix is for state to be keyed on `\Scope::getCurrent()` directly (the
+[Scope RFC](https://wiki.php.net/rfc/scope)), rather than held in one static the application
+swaps by hand. `fiber-interop/ext-scope`, bundled in ext-phasync, or its userland polyfill
+`fiber-interop/scope`, give every fiber and generator the scope of the operation it belongs to;
+with `ext-scope` loaded, `$_GET`, `$_POST`, `$_COOKIE`, `$_FILES`, `$_REQUEST`, the default
+timezone and the default `intl` locale already follow the scope this way, with no code swapping
+them. Spiral's own singletons - the session, the ORM heap, the current request - would need to
+become state looked up by the current `Scope` instead of one instance shared by a container, to
+be read concurrently by requests that overlap on a worker.

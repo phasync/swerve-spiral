@@ -12,8 +12,9 @@
     ],
     "require": {
         "php": "^8.2",
-        "phasync/phasync": "^2.0.0-beta7",
-        "phasync/swerve": "^0.1.0-beta5",
+        "phasync/phasync": "^2.0",
+        "phasync/swerve": "^0.1",
+        "phasync/swerve-psr15": "^0.1",
         "psr/http-server-handler": "^1.0",
         "spiral/framework": "^3.15"
     },
@@ -24,9 +25,18 @@
     "autoload": {
         "psr-4": {
             "Swerve\\Spiral\\": "src/"
+        },
+        "files": [
+            "src/functions.php"
+        ]
+    },
+    "extra": {
+        "swerve": {
+            "adapter": "spiral",
+            "entry": "Swerve\\Spiral\\entry"
         }
     },
-    "minimum-stability": "beta",
+    "minimum-stability": "stable",
     "prefer-stable": true,
     "scripts": {
         "test": "@php vendor/bin/pest --stop-on-defect",
@@ -38,5 +48,12 @@
             "pestphp/pest-plugin": true,
             "spiral/composer-publish-plugin": true
         }
-    }
+    },
+    "repositories": [
+        {
+            "name": "swerve-psr15",
+            "type": "vcs",
+            "url": "https://github.com/phasync/swerve-psr15"
+        }
+    ]
 }

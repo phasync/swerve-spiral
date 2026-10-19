@@ -3,8 +3,7 @@
 # framework's own skeleton (spiral/app), with this package autoloaded from the checkout and the
 # test routes of tests/Fixtures/src added. Idempotent.
 #
-# SWERVE_PATH=/path/to/swerve installs phasync/swerve from a local checkout instead of Packagist,
-# as the version of its latest tag.
+# SWERVE_PATH=/path/to/swerve installs phasync/swerve from a local checkout instead of Packagist.
 set -eu
 cd "$(dirname "$0")/Fixtures"
 
@@ -16,16 +15,19 @@ if [ ! -f app/app.php ]; then
 fi
 
 cd app
-composer config minimum-stability dev
+# spiral/app's own lock holds release candidates (spiral/grpc-client)
+composer config minimum-stability RC
+composer config prefer-stable true
 composer config prefer-stable true
 # The adapter from the checkout, by its autoload rule: a path repository's symlink would make the
 # tests directory contain itself
 php -r '$c = json_decode(file_get_contents("composer.json"), true); $c["autoload"]["psr-4"]["Swerve\\Spiral\\"] = "../../../src/"; file_put_contents("composer.json", json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
 if [ -n "${SWERVE_PATH:-}" ]; then
-    version=$(git -C "$SWERVE_PATH" describe --tags --abbrev=0)
-    composer config repositories.swerve "{\"type\": \"path\", \"url\": \"$SWERVE_PATH\", \"options\": {\"symlink\": false, \"versions\": {\"phasync/swerve\": \"$version\"}}}"
+    composer config repositories.swerve "{\"type\": \"path\", \"url\": \"$SWERVE_PATH\", \"options\": {\"symlink\": false, \"versions\": {\"phasync/swerve\": \"dev-main\"}}}"
 fi
-composer require --no-interaction --no-progress 'phasync/swerve:^0.1.0-alpha15'
+# The adapter's own requirements: swerve and swerve-psr15
+composer config repositories.swerve-psr15 vcs https://github.com/phasync/swerve-psr15
+composer require --no-interaction --no-progress --with-all-dependencies 'phasync/swerve:^0.1' 'phasync/swerve-psr15:^0.1'
 
 # The test routes, and Spiral's authentication (tokens in the session) for them
 mkdir -p app/src/SwerveTest
@@ -39,5 +41,5 @@ cat > swerve.php <<'PHP'
 
 require __DIR__ . '/vendor/autoload.php';
 
-return new Swerve\Spiral\Handler(__DIR__);
+return Swerve\Psr15\Bridge::wrap(new Swerve\Spiral\Handler(__DIR__));
 PHP

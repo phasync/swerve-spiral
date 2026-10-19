@@ -18,7 +18,7 @@ use Spiral\Session\SessionScope;
 /** The routes the tests of phasync/swerve-spiral use. */
 final class TestController
 {
-    /** Let other requests run: sleep() waits as a coroutine with phasync-ext. */
+    /** Let other requests run: sleep() waits as a coroutine with ext-phasync. */
     private static function nap(float $seconds): void
     {
         \extension_loaded('phasync') ? \usleep((int) ($seconds * 1e6)) : \phasync::sleep($seconds);
@@ -31,7 +31,7 @@ final class TestController
     }
 
     /** The token a form would carry. */
-    /** A wait of ?ms= (default 10) in usleep(), as a database query waits: it blocks the worker without phasync-ext. */
+    /** A wait of ?ms= (default 10) in usleep(), as a database query waits: it blocks the worker without ext-phasync. */
     #[Route(route: '/swerve/usleep', name: 'swerve-usleep', methods: ['GET'])]
     public function usleep(ServerRequestInterface $request): array
     {

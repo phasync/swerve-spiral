@@ -3,6 +3,7 @@
 namespace Swerve\Spiral;
 
 use phasync\Util\Synchronized;
+use Psr\Container\ContainerInterface;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -11,16 +12,21 @@ use Spiral\Boot\AbstractKernel;
 use Spiral\Boot\Environment\AppEnvironment;
 use Spiral\Boot\FinalizerInterface;
 use Spiral\Core\Container;
+use Spiral\Core\ContainerScope;
 use Spiral\Core\Options;
 use Spiral\Core\Scope;
+use Spiral\Exceptions\ExceptionHandler;
 use Spiral\Exceptions\ExceptionHandlerInterface;
 use Spiral\Exceptions\Verbosity;
 use Spiral\Http\Http;
+use Swerve\WorkerStoppingException;
 
 /**
- * A Spiral application as swerve's request handler, from the project's swerve.php:
+ * A Spiral application as a PSR-15 request handler, which the `spiral` adapter's entry
+ * ({@see entry()}) serves through swerve-psr15's Bridge; a swerve.php run with `--adapter=swerve`
+ * may do the same, for another kernel or exception handler:
  *
- *     return new Swerve\Spiral\Handler(__DIR__);
+ *     return Swerve\Psr15\Bridge::wrap(new Swerve\Spiral\Handler(__DIR__));
  *
  * Once per worker, the kernel boots as the skeleton's app.php boots it, without serve(), and
  * Spiral's 'http' scope opens for the worker's life. Per request, as Spiral's RoadRunner
@@ -43,6 +49,9 @@ final class Handler implements RequestHandlerInterface
     private readonly ResponseFactoryInterface $responses;
     private readonly bool $production;
 
+    /** The WorkerStoppingException Spiral's error middleware reported for the request in flight */
+    private ?WorkerStoppingException $stopping = null;
+
     /**
      * @param string                                  $root             the application's root directory, where composer.json is
      * @param class-string<AbstractKernel>            $kernel           the application's kernel, as in app.php
@@ -53,6 +62,9 @@ final class Handler implements RequestHandlerInterface
         string $kernel = 'App\Application\Kernel',
         string $exceptionHandler = 'App\Application\Exception\Handler',
     ) {
+        // The application's autoloader (the vendor directory swerve runs from): swerve's worker loads only its own dependencies
+        require_once $GLOBALS['_composer_autoload_path'] ?? "$root/vendor/autoload.php";
+
         // What is echoed outside a controller (a streamed body, a coroutine) still goes to swerve's
         // terminal, but past PHP's output layer: once that sent output, the headers count as sent
         // for the rest of the worker, and Spiral's session_set_save_handler() fails on every request
@@ -75,6 +87,23 @@ final class Handler implements RequestHandlerInterface
             container: $this->container,
         )->run() ?? throw new \RuntimeException('The Spiral application did not boot; its exception handler reported why');
 
+        // Spiral keeps the current container scope in a static, ContainerScope::$container, which its
+        // runScope() swaps when its own Fiber suspends. phasync runs a wait inside such a Fiber in
+        // place, other requests' coroutines with it (a WebSocket callback): they would see the
+        // waiting request's scope, its session and request. So the static is each request's own,
+        // swapped by the request's Scope
+        $containers = new \WeakMap();
+        $current    = \Closure::bind(static function (?ContainerInterface ...$set): ?ContainerInterface {
+            $was                                      = ContainerScope::$container;
+            [] !== $set && ContainerScope::$container = $set[0];
+
+            return $was;
+        }, null, ContainerScope::class);
+        \phasync::onScopeChange(static function (\Scope $new, ?\Scope $old) use ($containers, $current): void {
+            $was                               = $current($containers[$new] ?? null);
+            null !== $old && $containers[$old] = $was;
+        });
+
         // The 'http' scope, open for the worker's life as Spiral's RoadRunner dispatcher keeps it
         // while it serves: runScope() returns when its callback does, so the callback suspends a
         // fiber that is never resumed (ContainerScope passes a suspension on to the caller)
@@ -86,6 +115,14 @@ final class Handler implements RequestHandlerInterface
 
         $this->finalizer  = $this->container->get(FinalizerInterface::class);
         $this->errors     = $this->container->get(ExceptionHandlerInterface::class);
+        // A worker that stops ends its requests with a WorkerStoppingException, which Spiral's error
+        // middleware turns into a 500: noted as it reports it, and thrown on after the request, for
+        // swerve to answer (a 503 when nothing was sent yet)
+        if ($this->errors instanceof ExceptionHandler) {
+            $this->errors->addReporter(function (\Throwable $e): void {
+                $e instanceof WorkerStoppingException && $this->stopping = $e;
+            });
+        }
         $this->responses  = $this->container->get(ResponseFactoryInterface::class);
         $this->production = $this->container->get(AppEnvironment::class)->isProduction();
     }
@@ -95,7 +132,16 @@ final class Handler implements RequestHandlerInterface
         return Synchronized::run($this, fn (): ResponseInterface => $this->scope->invoke(
             function (Http $http) use ($request): ResponseInterface {
                 try {
-                    return $http->handle($request);
+                    $response = $http->handle($request);
+                    if (null !== $stopping = $this->stopping) {
+                        $this->stopping = null;
+
+                        throw $stopping;
+                    }
+
+                    return $response;
+                } catch (WorkerStoppingException $e) {
+                    throw $e;
                 } catch (\Throwable $e) {
                     // As Spiral's RoadRunner dispatcher answers what its pipeline let through
                     $this->errors->report($e);

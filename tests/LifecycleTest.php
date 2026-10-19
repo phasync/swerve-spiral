@@ -4,7 +4,7 @@
  * A worker's life: a drain that lets a request in flight finish, and memory over many requests.
  */
 
-it('finishes a slow request on SIGTERM, and logs no error', function () {
+it('ends a slow request with swerve\'s 503 on SIGTERM, and logs no error', function () {
     [$proc, $addr, $log] = app_start(1);
     [$host, $port]       = \explode(':', $addr);
     $s                   = \stream_socket_client("tcp://$host:$port", timeout: 5);
@@ -13,8 +13,8 @@ it('finishes a slow request on SIGTERM, and logs no error', function () {
     \proc_terminate($proc, \SIGTERM);
     $response = \stream_get_contents($s);
     \fclose($s);
-    expect($response)->toStartWith('HTTP/1.1 200')
-        ->and($response)->toEndWith('slow done');
+    // The worker stops at once, and its requests with it: swerve answers the one in flight
+    expect($response)->toStartWith('HTTP/1.1 503');
     expect(app_wait($proc, 5))->toBe(0);
     expect(log_problems($log))->toBe([]);
 });
